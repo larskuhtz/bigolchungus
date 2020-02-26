@@ -23,6 +23,7 @@ void usage() {
     "                  [ -g <global work size>  ]\n"
     "                  [ -k <kernel location>   ]\n"
     "                  [ -n <hexadecimal nonce> ]\n"
+    "                  [ -f <alternative nonce> ]\n"
     "                  [ -v                     ]\n"
     "                  <block>\n\n"
     "  1. Device Selection\n\n"
@@ -40,9 +41,11 @@ void usage() {
     "      Default `64`\n\n"
     "    -g <global work size>\n"
     "      Default `16777216` (1024 * 1024 * 16)\n\n"
+    "    -f uses the final 8 bytes of the block header as nonce. This is significantly more efficient than the default.\n\n"
     "    -k <kernel location>\n"
     "      If you are getting opencl error -46 or -30, try setting this to the absolute path of the `kernel.cl` file.\n"
-    "      Defaults to ./kernels/kernel.cl\n\n"
+    "      Defaults to ./kernels/kernel.cl\n"
+    "      If -f is provided the default kernel is ./kernel/kernel2.cl.\n\n"
     "  3. Debugging\n\n"
     "    -v\n"
     "      enable verbose mode.\n\n"
@@ -90,15 +93,23 @@ void ref_search_nonce(
     }
 }
 
+void print_hash(uint8_t* buf)
+{
+    for (int i = 3; i >= 0; --i) {
+        fprintf(stderr, "%016lx ", *((uint64_t*) (buf + i*8)));
+    }
+    fprintf(stderr, "\n");
+}
+
 int main(int argc, char* const* argv) {
     // test_opencl <hash>
-    
-    if (argc == 1) { 
+
+    if (argc == 1) {
       usage();
       exit(1);
     }
-    
-    
+
+
     auto t_start = std::chrono::high_resolution_clock::now();
 
     bool quiet = true;
@@ -110,9 +121,10 @@ int main(int argc, char* const* argv) {
     uint64_t nonceOverride;
     bool nonceOverridden = false;
     char* kernelPath = nullptr;
+    bool alternativeNonce = false;
 
     int opt;
-    while ((opt = getopt(argc, argv, "d:p:l:w:g:k:n:vh")) != -1) {
+    while ((opt = getopt(argc, argv, "d:p:l:w:g:k:n:fvh")) != -1) {
       switch(opt) {
         case 'd':
           deviceOverride = std::stoi(optarg);
@@ -131,6 +143,9 @@ int main(int argc, char* const* argv) {
           break;
         case 'k':
           kernelPath = optarg;
+          break;
+        case 'f':
+          alternativeNonce = true;
           break;
         case 'v':
           quiet = false;
@@ -202,7 +217,7 @@ int main(int argc, char* const* argv) {
       fclose(urandom);
     }
 
-    opencl_backend backend(nonce_step_size, quiet, deviceOverride, platformOverride, kernelPath);
+    opencl_backend backend(nonce_step_size, quiet, deviceOverride, platformOverride, kernelPath, alternativeNonce);
 
     backend.start_search(
         global_size, local_size, workset_size,
@@ -218,15 +233,23 @@ int main(int argc, char* const* argv) {
         if (found != 0) {
             if (!quiet) fprintf(stderr, "Done %#lx!\n", found);
 
-            blake2s_state state;
             uint8_t hash[32];
+            blake2s_state state;
             blake2s_init(&state, BLAKE2S_OUTBYTES);
-            blake2s_update(&state, &found, 8);
-            blake2s_update(&state, buf + 8, bufsize - 8);
+            if (alternativeNonce) {
+                blake2s_update(&state, buf, bufsize - 8);
+                blake2s_update(&state, &found, 8);
+            } else {
+                blake2s_update(&state, &found, 8);
+                blake2s_update(&state, buf + 8, bufsize - 8);
+            }
             blake2s_final(&state, hash, BLAKE2S_OUTBYTES);
 
             if (compare_uint256(target_hash, hash) == -1) {
                 fprintf(stderr, "Bad nonce!!!\n");
+                fprintf(stderr, "compare: %d\n", compare_uint256(target_hash, hash));
+                fprintf(stderr, "target: "); print_hash(target_hash);
+                fprintf(stderr, "hash:   "); print_hash(hash);
                 exit(-1);
             }
 

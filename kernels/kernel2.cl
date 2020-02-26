@@ -200,9 +200,19 @@ typedef signed   char    int8_t;
 #define Z9E   D
 #define Z9F   0
 
+#define B48 0x0
+#define B49 0x0
+#define B4A 0x0
+#define B4B 0x0
+#define B4C 0x0
+#define B4D 0x0
+#define B4E 0x0
+#define B4F 0x0
+
 #define Mx(r0, r, i)    Mx_(r0, Z ## r ## i)
 #define Mx_(r0, n)      Mx__(r0, n)
 #define Mx__(r0, n)     Bx(r0, n)
+
 #define Bx(r, i) B ## r ## i
 
 #define G(m0, m1, a,b,c,d)       \
@@ -257,15 +267,21 @@ typedef signed   char    int8_t;
     ROUND(r, 7);                    \
     ROUND(r, 8);                    \
     ROUND(r, 9);                    \
-    H0 = H0 ^ V0 ^ V8;              \
-    H1 = H1 ^ V1 ^ V9;              \
-    H2 = H2 ^ V2 ^ VA;              \
-    H3 = H3 ^ V3 ^ VB;              \
-    H4 = H4 ^ V4 ^ VC;              \
-    H5 = H5 ^ V5 ^ VD;              \
-    H6 = H6 ^ V6 ^ VE;              \
-    H7 = H7 ^ V7 ^ VF;              \
+    SET_RESULT();                   \
   } while (0)
+
+#ifdef COMPARE_ALL
+  #define SET_RESULT() do { \
+    A = (((uint64_t) (H7 ^ V7 ^ VF)) << 32) | (H6 ^ V6 ^ VE); \
+    B = (((uint64_t) (H5 ^ V5 ^ VD)) << 32) | (H4 ^ V4 ^ VC); \
+    C = (((uint64_t) (H3 ^ V3 ^ VB)) << 32) | (H2 ^ V2 ^ VA); \
+    D = (((uint64_t) (H1 ^ V1 ^ V9)) << 32) | (H0 ^ V0 ^ V8); \
+  } while (0)
+#else
+  #define SET_RESULT() do { \
+    A = (((uint64_t) (H7 ^ V7 ^ VF)) << 32) | (H6 ^ V6 ^ VE); \
+  } while (0)
+#endif
 
 #ifdef COMPARE_ALL
   #define TEST_RESULT() (                           \
@@ -278,46 +294,50 @@ typedef signed   char    int8_t;
   #define TEST_RESULT() (A0 > A)
 #endif
 
+/* 
+Macros
+- blake2s state vector H0, ..., H7
+- input word32s B40, B41, B42, B43, B44
+- partial input word PB45[0-16] (the remaining bytes get overwritten)
+- target A0, B0, C0, D0
+*/
 
 kernel void search_nonce(uint64_t start_nonce, global uint64_t* result_ptr) {
+
   size_t gid = get_global_id(0);
-  uint64_t nonce0 = start_nonce + gid * WORKSET_SIZE;
+  uint64_t nonce0 = (start_nonce + gid * WORKSET_SIZE);
 
   for (uint64_t i = 0; i < WORKSET_SIZE; i++) {
-    uint64_t nonce = nonce0 + i;
-    uint32_t B00 = (uint32_t) (nonce & 0xFFFFFFFF);
-    uint32_t B01 = (uint32_t) (nonce >> 32);
 
-    uint32_t H0, H1, H2, H3, H4, H5, H6, H7;
-
-    H0 = 0x6b08e647UL;
-    H1 = IV(1);
-    H2 = IV(2);
-    H3 = IV(3);
-    H4 = IV(4);
-    H5 = IV(5);
-    H6 = IV(6);
-    H7 = IV(7);
+    uint64_t A;
+    #ifdef COMPARE_ALL
+    uint64_t B, C, D;
+    #endif
 
     uint32_t V0, V1, V2, V3, V4, V5, V6, V7;
     uint32_t V8, V9, VA, VB, VC, VD, VE, VF;
 
-    DO_COMPRESS(0, 0x00000000, 0x00000040);
-    DO_COMPRESS(1, 0x00000000, 0x00000080);
-    DO_COMPRESS(2, 0x00000000, 0x000000C0);
-    DO_COMPRESS(3, 0x00000000, 0x00000100);
+    uint64_t nonce = nonce0 + i;
+
+    // nonce is byte 22-30
+    //
+    // word 5: 0x0000FFFF
+    // word 6: 0xFFFFFFFF
+    // word 7: 0xFFFF0000
+    //
+    // 50 51 52 53 | 60 61 62 63 | 70 71 72 73
+    // xx xx nn nn   nn nn nn nn   nn nn 00 00
+
+    uint32_t B45 = (uint32_t) ((nonce & 0x0000FFFF) << 16) | ((PB45 & 0x0000FFFF));
+    uint32_t B46 = (uint32_t) (nonce >> 16);
+    uint32_t B47 = (uint32_t) (nonce >> 48);
+
     DO_COMPRESS(4, 0xFFFFFFFF, 0x0000011E);
-
-    uint64_t A = (((uint64_t) H7) << 32) | H6;
-
-    #ifdef COMPARE_ALL
-    uint64_t B = (((uint64_t) H5) << 32) | H4;
-    uint64_t C = (((uint64_t) H3) << 32) | H2;
-    uint64_t D = (((uint64_t) H1) << 32) | H0;
-    #endif
 
     if (TEST_RESULT()) {
       *result_ptr = nonce;
+      break;
     }
   }
 }
+
