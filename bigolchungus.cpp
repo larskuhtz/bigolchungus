@@ -22,8 +22,8 @@ void usage() {
     "                  [ -w <work set size      ]\n"
     "                  [ -g <global work size>  ]\n"
     "                  [ -k <kernel location>   ]\n"
+    "                  [ -a <alternative nonce> ]\n"
     "                  [ -n <hexadecimal nonce> ]\n"
-    "                  [ -f <alternative nonce> ]\n"
     "                  [ -v                     ]\n"
     "                  <block>\n\n"
     "  1. Device Selection\n\n"
@@ -41,7 +41,6 @@ void usage() {
     "      Default `64`\n\n"
     "    -g <global work size>\n"
     "      Default `16777216` (1024 * 1024 * 16)\n\n"
-    "    -f uses the final 8 bytes of the block header as nonce. This is significantly more efficient than the default.\n\n"
     "    -k <kernel location>\n"
     "      If you are getting opencl error -46 or -30, try setting this to the absolute path of the `kernel.cl` file.\n"
     "      Defaults to ./kernels/kernel.cl\n"
@@ -50,6 +49,8 @@ void usage() {
     "    -v\n"
     "      enable verbose mode.\n\n"
     "  4. Advanced\n\n"
+    "    -a uses the first 8 bytes of the block header as nonce. This is about 5 times slower than the default.\n"
+    "      This also requires the use of a different kernel that can be found at ./kernels/alternative-nonce.cl\n\n"
     "    -n <hexadecimal nonce>\n"
     "      Manually sets a nonce for hashing.\n"
     "      In the unlikely case that your mining host provides a nonce, use this.\n"
@@ -124,7 +125,7 @@ int main(int argc, char* const* argv) {
     bool alternativeNonce = false;
 
     int opt;
-    while ((opt = getopt(argc, argv, "d:p:l:w:g:k:n:fvh")) != -1) {
+    while ((opt = getopt(argc, argv, "d:p:l:w:g:k:n:avh")) != -1) {
       switch(opt) {
         case 'd':
           deviceOverride = std::stoi(optarg);
@@ -144,7 +145,7 @@ int main(int argc, char* const* argv) {
         case 'k':
           kernelPath = optarg;
           break;
-        case 'f':
+        case 'a':
           alternativeNonce = true;
           break;
         case 'v':
@@ -237,19 +238,16 @@ int main(int argc, char* const* argv) {
             blake2s_state state;
             blake2s_init(&state, BLAKE2S_OUTBYTES);
             if (alternativeNonce) {
-                blake2s_update(&state, buf, bufsize - 8);
-                blake2s_update(&state, &found, 8);
-            } else {
                 blake2s_update(&state, &found, 8);
                 blake2s_update(&state, buf + 8, bufsize - 8);
+            } else {
+                blake2s_update(&state, buf, bufsize - 8);
+                blake2s_update(&state, &found, 8);
             }
             blake2s_final(&state, hash, BLAKE2S_OUTBYTES);
 
             if (compare_uint256(target_hash, hash) == -1) {
                 fprintf(stderr, "Bad nonce!!!\n");
-                fprintf(stderr, "compare: %d\n", compare_uint256(target_hash, hash));
-                fprintf(stderr, "target: "); print_hash(target_hash);
-                fprintf(stderr, "hash:   "); print_hash(hash);
                 exit(-1);
             }
 

@@ -150,7 +150,7 @@ opencl_backend::opencl_backend(size_t search_nonce_size, bool quiet, int device_
       kernel_path = kernel_path_override;
     } else {
       if (alternativeNonce) {
-        kernel_path = "kernels/kernel2.cl";
+        kernel_path = "kernels/alternative-nonce.cl";
       } else {
         kernel_path = "kernels/kernel.cl";
       }
@@ -195,6 +195,17 @@ void opencl_backend::start_search(
     std::ostringstream ss;
 
     if (alternativeNonce) {
+        for (size_t i = 0; i < 320; i+=4) {
+            if (i == 0 || i == 4) continue;
+            uint32_t value;
+            if (i < 286) {
+                value = *(uint32_t*)(block_data + i);
+            } else {
+                value = 0;
+            }
+            ss << "-DB" << (i / 64) << tohex((i % 64) / 4) << "=" << value << "U ";
+        }
+    } else {
         std::cerr << "Preprocessing blake2s state" << std::endl;
         blake2s_state s;
         blake2s_init(&s, BLAKE2S_OUTBYTES);
@@ -212,18 +223,6 @@ void opencl_backend::start_search(
         }
         /* partial input word for B45 */
         ss << "-DPB" << (276 / 64) << tohex((276 % 64) / 4) << "=" << *(uint32_t*)(block_data + 276) << "U ";
-
-    } else {
-        for (size_t i = 0; i < 320; i+=4) {
-            if (i == 0 || i == 4) continue;
-            uint32_t value;
-            if (i < 286) {
-                value = *(uint32_t*)(block_data + i);
-            } else {
-                value = 0;
-            }
-            ss << "-DB" << (i / 64) << tohex((i % 64) / 4) << "=" << value << "U ";
-        }
     }
 
     for (size_t i = 0; i < 32; i += 8) {
